@@ -137,9 +137,10 @@ interface StaticNodesLayerProps {
   mode: ToolMode;
   onPointerDown: (e: React.PointerEvent, note: Note) => void;
   onPointerUp?: (e: React.PointerEvent, noteId: string) => void;
+  onContextMenu: (e: React.MouseEvent, noteId: string) => void;
 }
 
-const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onPointerUp }: StaticNodesLayerProps) => {
+const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onPointerUp, onContextMenu }: StaticNodesLayerProps) => {
   return (
     <g className="nodes-static">
       {notes.map((note: Note) => {
@@ -156,6 +157,7 @@ const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, active
             transform={`translate(${note.x},${note.y})`}
             onPointerDown={(e) => onPointerDown(e, note)}
             onPointerUp={(e) => onPointerUp && onPointerUp(e, note.id)}
+            onContextMenu={(e) => onContextMenu(e, note.id)}
             className={`${mode === 'PAN' ? '' : 'cursor-grab'}`}
             style={{ opacity, transition: 'opacity 0.2s' }}
           >
@@ -315,6 +317,9 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
   const handlePointerDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture(e.pointerId);
     
+    // Prevent clearing context menu if we click on it (handled by bubble, but good to be safe)
+    if ((e.target as HTMLElement).closest('.context-menu')) return;
+
     setActiveNodeId(null);
     setSelectionMenuPos(null);
     if (mode !== 'CONNECT') setLinkSourceId(null);
@@ -332,6 +337,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     else if (mode === 'PAN' || mode === 'DEFAULT') {
       isDraggingRef.current = true;
       if (mode === 'DEFAULT' && !e.shiftKey) {
+        // If clicking background, clear selection
         setSelectedNodeIds(new Set());
       }
     }
@@ -392,6 +398,9 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
       if (updates.length > 0) {
         dragCommitRef.current = true; 
         onUpdateNotes(updates);
+        // UX OPTIMIZATION: Auto-deselect nodes after drag is complete
+        // This cancels the "activation state" as requested.
+        setSelectedNodeIds(new Set()); 
       } else {
         setActiveDragIds(new Set());
         setDragOverrides(new Map());
@@ -421,15 +430,6 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
 
       setSelectedNodeIds(newSelection);
       setSelectionBox(null);
-
-      if (newSelection.size > 0) {
-        const selectedNotes = notes.filter(n => newSelection.has(n.id));
-        if (selectedNotes.length > 0) {
-          const avgX = selectedNotes.reduce((sum, n) => sum + n.x, 0) / selectedNotes.length;
-          const avgY = selectedNotes.reduce((sum, n) => sum + n.y, 0) / selectedNotes.length;
-          setSelectionMenuPos(toScreenCoords(avgX, avgY));
-        }
-      }
     }
   };
 
@@ -440,7 +440,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     // Always capture pointer start position for accurate click/distance detection
     pointerStartPos.current = { x: e.clientX, y: e.clientY };
     
-    // Capture state for click logic and drag permission
+    // Capture state for click logic
     wasNodeSelectedRef.current = selectedNodeIds.has(note.id);
 
     if (mode === 'CONNECT') {
@@ -459,6 +459,9 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
       return;
     }
 
+    // UX OPTIMIZATION: INSTANT SELECTION & DRAG
+    // We update selection immediately on MouseDown so the user sees feedback
+    // and can start dragging instantly without a second click.
     let newSelection = new Set<string>(selectedNodeIds);
     if (!newSelection.has(note.id)) {
         if (!e.shiftKey) newSelection = new Set([note.id]);
@@ -469,59 +472,78 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     setSelectionMenuPos(null);
     setActiveNodeId(null);
 
+    // Prepare Drag Immediately
     if (!isLayoutLocked && mode !== 'PAN' && mode !== 'SELECT') {
-      // Condition: Node is allowed to be dragged only if it was already active (selected).
-      // If it wasn't selected, this click just selects it. The user must click again to drag.
-      if (wasNodeSelectedRef.current) {
-        const coords = getPointerPosition(e);
+      // Right click shouldn't drag
+      if (e.button === 2) return; 
 
-        const offsets = new Map<string, {dx: number, dy: number}>();
-        const overrides = new Map<string, {x: number, y: number}>();
-        const nodesToDrag = newSelection.has(note.id) ? Array.from(newSelection) : [note.id];
-        const newActiveDragIds = new Set<string>();
-
-        nodesToDrag.forEach((id: string) => {
-          const n = notes.find(node => node.id === id);
-          if (n) {
-            offsets.set(id, { dx: coords.x - n.x, dy: coords.y - n.y });
-            overrides.set(id, { x: n.x, y: n.y });
-            newActiveDragIds.add(id);
-          }
-        });
-        
-        dragStartOffsets.current = offsets;
-        setActiveDragIds(newActiveDragIds); 
-        setDragOverrides(overrides); 
-        isDraggingRef.current = true;
-      }
+      const coords = getPointerPosition(e);
+      const offsets = new Map<string, {dx: number, dy: number}>();
+      const overrides = new Map<string, {x: number, y: number}>();
+      
+      // Drag all currently selected nodes (including the one we just clicked)
+      newSelection.forEach((id: string) => {
+        const n = notes.find(node => node.id === id);
+        if (n) {
+          offsets.set(id, { dx: coords.x - n.x, dy: coords.y - n.y });
+          overrides.set(id, { x: n.x, y: n.y });
+        }
+      });
+      
+      dragStartOffsets.current = offsets;
+      setActiveDragIds(newSelection); // Set active drag IDs immediately
+      setDragOverrides(overrides); 
+      isDraggingRef.current = true;
     }
   }, [mode, linkSourceId, notes, selectedNodeIds, isLayoutLocked, getPointerPosition, onUpdateNotes]);
 
   const handleNodePointerUp = useCallback((e: React.PointerEvent, noteId: string) => {
-    e.stopPropagation();
-    (e.target as Element).releasePointerCapture(e.pointerId);
-    
     const dist = Math.hypot(e.clientX - pointerStartPos.current.x, e.clientY - pointerStartPos.current.y);
     
-    if (dist < 5 && mode !== 'CONNECT') {
-      // Logic: If node was ALREADY selected and we clicked it again (without dragging), open popup.
-      if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId)) {
-          setActiveNodeId(noteId);
-      }
-      // Logic for deselecting with Shift key if clicked again
-      else if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId) && e.shiftKey) {
-            const newSet = new Set(selectedNodeIds);
-            newSet.delete(noteId);
-            setSelectedNodeIds(newSet);
-      }
+    // If it was a CLICK (not a drag)
+    if (dist < 5) {
+      e.stopPropagation(); // Stop bubbling so SVG doesn't trigger "Drag End -> Deselect" logic
+      (e.target as Element).releasePointerCapture(e.pointerId);
 
-      if (selectedNodeIds.size > 1 && selectedNodeIds.has(noteId)) {
-         // Open bulk menu
-         const note = notes.find(n => n.id === noteId);
-         if (note) setSelectionMenuPos(toScreenCoords(note.x, note.y));
+      // Clear drag state immediately so it doesn't look like it's being moved (Blue state)
+      setActiveDragIds(new Set());
+      setDragOverrides(new Map());
+      dragStartOffsets.current.clear();
+
+      if (mode !== 'CONNECT') {
+        // If we clicked on an ALREADY SELECTED node, and didn't drag it,
+        // this counts as a request to open the popup.
+        if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId) && !e.shiftKey) {
+            setActiveNodeId(noteId);
+        }
+        // If Shift+Click on active node, deselect it
+        else if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId) && e.shiftKey) {
+              const newSet = new Set(selectedNodeIds);
+              newSet.delete(noteId);
+              setSelectedNodeIds(newSet);
+        }
       }
+    } 
+    // If dist >= 5, it is a drag. 
+    // We do NOT stop propagation. We let it bubble to the SVG's handlePointerUp
+    // which handles committing the drag and auto-deselecting the node.
+  }, [mode, selectedNodeIds, notes]);
+
+  const handleNodeContextMenu = useCallback((e: React.MouseEvent, noteId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Ensure the Right-Clicked node is selected
+    const newSelection = new Set(selectedNodeIds);
+    newSelection.add(noteId);
+    setSelectedNodeIds(newSelection);
+    
+    // Show Menu
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+        setSelectionMenuPos(toScreenCoords(note.x, note.y));
     }
-  }, [mode, selectedNodeIds, notes, toScreenCoords]);
+  }, [selectedNodeIds, notes, toScreenCoords]);
 
   const activeNode = activeNodeId ? notes.find(n => n.id === activeNodeId) : null;
   const activeNodeScreenPos = activeNode ? toScreenCoords(activeNode.x, activeNode.y) : null;
@@ -584,6 +606,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
              const scale = e.deltaY > 0 ? 1.05 : 0.95;
              setViewBox(prev => ({ ...prev, w: prev.w * scale, h: prev.h * scale }));
         }}
+        onContextMenu={(e) => e.preventDefault()}
       >
         <defs>
           <radialGradient id="nodeGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
@@ -613,6 +636,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
           mode={mode}
           onPointerDown={handleNodePointerDown}
           onPointerUp={handleNodePointerUp}
+          onContextMenu={handleNodeContextMenu}
         />
         <DynamicNodesLayer 
           notes={notes}
@@ -669,15 +693,18 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
 
       {selectionMenuPos && (
         <div 
-            className="absolute z-40 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl p-1 flex gap-1 animate-in fade-in zoom-in-95"
-            style={{ left: selectionMenuPos.x, top: selectionMenuPos.y + 45, transform: 'translateX(-50%)' }}
+            className="context-menu absolute z-40 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl p-1 flex flex-col gap-0.5 min-w-[120px] animate-in fade-in zoom-in-95"
+            style={{ left: selectionMenuPos.x, top: selectionMenuPos.y }}
             onPointerDown={(e) => e.stopPropagation()}
         >
-            <button onClick={() => { onDuplicateNotes(Array.from(selectedNodeIds)); setSelectionMenuPos(null); }} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-700 rounded text-xs text-slate-200">
+            <button onClick={() => onSelectNote(Array.from(selectedNodeIds)[0])} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 rounded text-xs text-slate-200 text-left w-full">
+                <Icon name="ExternalLink" size={14} /> Open
+            </button>
+            <button onClick={() => { onDuplicateNotes(Array.from(selectedNodeIds)); setSelectionMenuPos(null); }} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700 rounded text-xs text-slate-200 text-left w-full">
                 <Icon name="Copy" size={14} /> Copy
             </button>
-            <div className="w-px bg-slate-700 my-1"></div>
-            <button onClick={() => { onDeleteNotes(Array.from(selectedNodeIds)); setSelectionMenuPos(null); setSelectedNodeIds(new Set()); }} className="flex items-center gap-1 px-3 py-1.5 hover:bg-red-900/30 text-red-300 rounded text-xs">
+            <div className="h-px bg-slate-700 my-0.5 mx-1"></div>
+            <button onClick={() => { onDeleteNotes(Array.from(selectedNodeIds)); setSelectionMenuPos(null); setSelectedNodeIds(new Set()); }} className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-900/30 text-red-300 rounded text-xs text-left w-full">
                 <Icon name="Trash2" size={14} /> Delete
             </button>
         </div>
