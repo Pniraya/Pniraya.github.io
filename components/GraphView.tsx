@@ -128,7 +128,18 @@ const DynamicConnectionsLayer = React.memo(({ notes, dragOverrides, activeDragId
   return <g className="connections-dynamic pointer-events-none">{els}</g>;
 });
 
-const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onDoubleClick, onPointerUp }: any) => {
+interface StaticNodesLayerProps {
+  notes: Note[];
+  activeDragIds: Set<string>;
+  selectedIds: Set<string>;
+  activeId: string | null;
+  linkSourceId: string | null;
+  mode: ToolMode;
+  onPointerDown: (e: React.PointerEvent, note: Note) => void;
+  onPointerUp?: (e: React.PointerEvent, noteId: string) => void;
+}
+
+const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onPointerUp }: StaticNodesLayerProps) => {
   return (
     <g className="nodes-static">
       {notes.map((note: Note) => {
@@ -145,7 +156,6 @@ const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, active
             transform={`translate(${note.x},${note.y})`}
             onPointerDown={(e) => onPointerDown(e, note)}
             onPointerUp={(e) => onPointerUp && onPointerUp(e, note.id)}
-            onDoubleClick={(e: React.MouseEvent) => onDoubleClick(e, note)}
             className={`${mode === 'PAN' ? '' : 'cursor-grab'}`}
             style={{ opacity, transition: 'opacity 0.2s' }}
           >
@@ -172,7 +182,14 @@ const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, active
   );
 });
 
-const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onDoubleClick, onPointerUp }: any) => {
+interface DynamicNodesLayerProps {
+  notes: Note[];
+  dragOverrides: Map<string, { x: number; y: number }>;
+  onPointerDown: (e: React.PointerEvent, note: Note) => void;
+  onPointerUp?: (e: React.PointerEvent, noteId: string) => void;
+}
+
+const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onPointerUp }: DynamicNodesLayerProps) => {
   if (dragOverrides.size === 0) return null;
 
   return (
@@ -187,7 +204,6 @@ const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onD
             transform={`translate(${pos.x},${pos.y})`}
             onPointerDown={(e) => onPointerDown(e, note)}
             onPointerUp={(e) => onPointerUp && onPointerUp(e, note.id)}
-            onDoubleClick={(e: React.MouseEvent) => onDoubleClick(e, note)}
             className="cursor-grabbing"
             style={{ willChange: 'transform' }} 
           >
@@ -475,11 +491,6 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     }
   }, [mode, linkSourceId, notes, selectedNodeIds, isLayoutLocked, getPointerPosition, onUpdateNotes]);
 
-  const handleNodeDoubleClick = useCallback((e: React.MouseEvent, note: Note) => {
-    e.stopPropagation();
-    setActiveNodeId(note.id);
-  }, []);
-
   const handleNodePointerUp = useCallback((e: React.PointerEvent, noteId: string) => {
     e.stopPropagation();
     (e.target as Element).releasePointerCapture(e.pointerId);
@@ -487,13 +498,15 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     const dist = Math.hypot(e.clientX - pointerStartPos.current.x, e.clientY - pointerStartPos.current.y);
     
     if (dist < 5 && mode !== 'CONNECT') {
-      // Logic for deselecting with Shift key if clicked again
+      // Logic: If node was ALREADY selected and we clicked it again (without dragging), open popup.
       if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId)) {
-         if (e.shiftKey) {
+          setActiveNodeId(noteId);
+      }
+      // Logic for deselecting with Shift key if clicked again
+      else if (wasNodeSelectedRef.current && selectedNodeIds.has(noteId) && e.shiftKey) {
             const newSet = new Set(selectedNodeIds);
             newSet.delete(noteId);
             setSelectedNodeIds(newSet);
-        }
       }
 
       if (selectedNodeIds.size > 1 && selectedNodeIds.has(noteId)) {
@@ -512,7 +525,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
       ref={containerRef} 
       className="flex-1 flex flex-col h-full bg-slate-950 relative overflow-hidden select-none"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900/30 via-slate-950 to-black pointer-events-none"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black pointer-events-none"></div>
       
       <style>{`
         @keyframes flow-gradient {
@@ -593,14 +606,12 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
           linkSourceId={linkSourceId}
           mode={mode}
           onPointerDown={handleNodePointerDown}
-          onDoubleClick={handleNodeDoubleClick}
           onPointerUp={handleNodePointerUp}
         />
         <DynamicNodesLayer 
           notes={notes}
           dragOverrides={dragOverrides}
           onPointerDown={handleNodePointerDown}
-          onDoubleClick={handleNodeDoubleClick}
           onPointerUp={handleNodePointerUp}
         />
 
