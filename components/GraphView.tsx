@@ -128,7 +128,7 @@ const DynamicConnectionsLayer = React.memo(({ notes, dragOverrides, activeDragId
   return <g className="connections-dynamic pointer-events-none">{els}</g>;
 });
 
-const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onDoubleClick }: any) => {
+const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, activeId, linkSourceId, mode, onPointerDown, onDoubleClick, onPointerUp }: any) => {
   return (
     <g className="nodes-static">
       {notes.map((note: Note) => {
@@ -144,6 +144,7 @@ const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, active
             key={note.id}
             transform={`translate(${note.x},${note.y})`}
             onPointerDown={(e) => onPointerDown(e, note)}
+            onPointerUp={(e) => onPointerUp && onPointerUp(e, note.id)}
             onDoubleClick={(e: React.MouseEvent) => onDoubleClick(e, note)}
             className={`${mode === 'PAN' ? '' : 'cursor-grab'}`}
             style={{ opacity, transition: 'opacity 0.2s' }}
@@ -171,7 +172,7 @@ const StaticNodesLayer = React.memo(({ notes, activeDragIds, selectedIds, active
   );
 });
 
-const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onDoubleClick }: any) => {
+const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onDoubleClick, onPointerUp }: any) => {
   if (dragOverrides.size === 0) return null;
 
   return (
@@ -185,6 +186,7 @@ const DynamicNodesLayer = React.memo(({ notes, dragOverrides, onPointerDown, onD
             key={note.id}
             transform={`translate(${pos.x},${pos.y})`}
             onPointerDown={(e) => onPointerDown(e, note)}
+            onPointerUp={(e) => onPointerUp && onPointerUp(e, note.id)}
             onDoubleClick={(e: React.MouseEvent) => onDoubleClick(e, note)}
             className="cursor-grabbing"
             style={{ willChange: 'transform' }} 
@@ -388,7 +390,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
       const w = Math.abs(selectionBox.w);
       const h = Math.abs(selectionBox.h);
 
-      const newSelection = new Set(e.shiftKey ? selectedNodeIds : []);
+      const newSelection = new Set<string>(e.shiftKey ? selectedNodeIds : []);
 
       notes.forEach(note => {
         const closestX = Math.max(x, Math.min(note.x, x + w));
@@ -592,12 +594,14 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
           mode={mode}
           onPointerDown={handleNodePointerDown}
           onDoubleClick={handleNodeDoubleClick}
+          onPointerUp={handleNodePointerUp}
         />
         <DynamicNodesLayer 
           notes={notes}
           dragOverrides={dragOverrides}
           onPointerDown={handleNodePointerDown}
           onDoubleClick={handleNodeDoubleClick}
+          onPointerUp={handleNodePointerUp}
         />
 
         {selectionBox && mode === 'SELECT' && (
