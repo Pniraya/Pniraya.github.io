@@ -437,7 +437,10 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     e.stopPropagation(); 
     (e.target as Element).setPointerCapture(e.pointerId);
     
-    // Capture state for click logic
+    // Always capture pointer start position for accurate click/distance detection
+    pointerStartPos.current = { x: e.clientX, y: e.clientY };
+    
+    // Capture state for click logic and drag permission
     wasNodeSelectedRef.current = selectedNodeIds.has(note.id);
 
     if (mode === 'CONNECT') {
@@ -456,7 +459,7 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
       return;
     }
 
-    let newSelection = new Set(selectedNodeIds);
+    let newSelection = new Set<string>(selectedNodeIds);
     if (!newSelection.has(note.id)) {
         if (!e.shiftKey) newSelection = new Set([note.id]);
         else newSelection.add(note.id);
@@ -467,27 +470,30 @@ export const GraphView: React.FC<GraphViewProps> = React.memo(({
     setActiveNodeId(null);
 
     if (!isLayoutLocked && mode !== 'PAN' && mode !== 'SELECT') {
-      const coords = getPointerPosition(e);
-      pointerStartPos.current = { x: e.clientX, y: e.clientY };
+      // Condition: Node is allowed to be dragged only if it was already active (selected).
+      // If it wasn't selected, this click just selects it. The user must click again to drag.
+      if (wasNodeSelectedRef.current) {
+        const coords = getPointerPosition(e);
 
-      const offsets = new Map();
-      const overrides = new Map();
-      const nodesToDrag = newSelection.has(note.id) ? Array.from(newSelection) : [note.id];
-      const newActiveDragIds = new Set<string>();
+        const offsets = new Map<string, {dx: number, dy: number}>();
+        const overrides = new Map<string, {x: number, y: number}>();
+        const nodesToDrag = newSelection.has(note.id) ? Array.from(newSelection) : [note.id];
+        const newActiveDragIds = new Set<string>();
 
-      nodesToDrag.forEach(id => {
-        const n = notes.find(node => node.id === id);
-        if (n) {
-          offsets.set(id, { dx: coords.x - n.x, dy: coords.y - n.y });
-          overrides.set(id, { x: n.x, y: n.y });
-          newActiveDragIds.add(id);
-        }
-      });
-      
-      dragStartOffsets.current = offsets;
-      setActiveDragIds(newActiveDragIds); 
-      setDragOverrides(overrides); 
-      isDraggingRef.current = true;
+        nodesToDrag.forEach((id: string) => {
+          const n = notes.find(node => node.id === id);
+          if (n) {
+            offsets.set(id, { dx: coords.x - n.x, dy: coords.y - n.y });
+            overrides.set(id, { x: n.x, y: n.y });
+            newActiveDragIds.add(id);
+          }
+        });
+        
+        dragStartOffsets.current = offsets;
+        setActiveDragIds(newActiveDragIds); 
+        setDragOverrides(overrides); 
+        isDraggingRef.current = true;
+      }
     }
   }, [mode, linkSourceId, notes, selectedNodeIds, isLayoutLocked, getPointerPosition, onUpdateNotes]);
 
